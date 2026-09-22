@@ -266,7 +266,7 @@ def extract_run_summaries_from_mth5s(mth5_list, summary_type="run", deduplicate=
         if isinstance(mth5_elt, mth5.mth5.MTH5):
             mth5_obj = mth5_elt
         else:  # mth5_elt is a path or a string
-            mth5_obj = initialize_mth5(mth5_elt, mode="a")
+            mth5_obj = initialize_mth5(mth5_elt, mode="r")
 
         df = mth5_obj.run_summary.copy()
 
