@@ -840,7 +840,7 @@ class KernelDataset:
             )
             return {}
         with MTH5() as m:
-            m.open_mth5(mth5_path)
+            m.open_mth5(mth5_path, mode="r")
             station_group = m.from_reference(h5_station_reference)
             survey_metadata = station_group.survey_metadata
 
