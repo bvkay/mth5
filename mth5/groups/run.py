@@ -1046,6 +1046,13 @@ class RunGroup(BaseGroup):
             msg = f"Input must be a mt_timeseries.RunTS object not {type(run_ts_obj)}"
             self.logger.error(msg)
             raise MTH5Error(msg)
+        run_id = run_ts_obj.run_metadata.id
+        if run_id not in ["0", None, ""]:
+            if self.metadata.id not in ["0", None, "", run_id]:
+                self.logger.warning(
+                    f"RunTS run.id {run_id} != group run.id {self.metadata.id}. "
+                    f"Setting group run.id to {run_id}"
+                )
         self._metadata.update(run_ts_obj.run_metadata)
 
         channels = []
@@ -1062,10 +1069,14 @@ class RunGroup(BaseGroup):
                             f"Setting to ch.station_metadata.id to {self.station_metadata.id}"
                         )
                         ch.station_metadata.id = self.station_metadata.id
+            # A channel taken from a RunTS reads its run id from the run.id
+            # attribute of its DataArray, which keeps the id the RunTS was
+            # built with; setting run_ts.run_metadata.id later does not change
+            # it, so a mismatch here is expected and not worth a warning.
             if ch.run_metadata.id is not None:
                 if ch.run_metadata.id != self.metadata.id:
                     if ch.run_metadata.id not in ["0", None]:
-                        self.logger.warning(
+                        self.logger.debug(
                             f"Channel run.id {ch.run_metadata.id} != "
                             f" group run.id {self.metadata.id}. "
                             f"Setting to ch.run_metadata.id to {self.metadata.id}"
