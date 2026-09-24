@@ -318,6 +318,10 @@ class ChannelDataset:
         >>> print(f"{station_meta.id}: {station_meta.location.latitude}, {station_meta.location.longitude}")
         'MT001: 40.5, -112.3'
         """
+        return self._station_metadata_with(self.run_metadata)
+
+    def _station_metadata_with(self, run_metadata: metadata.Run) -> metadata.Station:
+        """Station metadata from the station group holding `run_metadata`."""
         station_metadata = metadata.Station()
         station_metadata.from_dict(
             {
@@ -326,7 +330,7 @@ class ChannelDataset:
                 )
             }
         )
-        station_metadata.add_run(self.run_metadata)
+        station_metadata.add_run(run_metadata)
         return station_metadata
 
     @property
@@ -347,6 +351,12 @@ class ChannelDataset:
         >>> print(f"Stations: {len(survey_meta.stations)}")
         Stations: 15
         """
+        return self._survey_metadata_with(self.station_metadata)
+
+    def _survey_metadata_with(
+        self, station_metadata: metadata.Station
+    ) -> metadata.Survey:
+        """Survey metadata from the survey group holding `station_metadata`."""
         survey_metadata = metadata.Survey()
         survey_metadata.from_dict(
             {
@@ -356,8 +366,26 @@ class ChannelDataset:
                 )
             }
         )
-        survey_metadata.add_station(self.station_metadata)
+        survey_metadata.add_station(station_metadata)
         return survey_metadata
+
+    def _metadata_levels(
+        self,
+    ) -> tuple[metadata.Run, metadata.Station, metadata.Survey]:
+        """
+        Run, station and survey metadata, each built once.
+
+        Equal to what the run_metadata, station_metadata and survey_metadata
+        properties return, without building the run twice more and the
+        station once more.
+        """
+        run_metadata = self.run_metadata
+        station_metadata = self._station_metadata_with(run_metadata)
+        return (
+            run_metadata,
+            station_metadata,
+            self._survey_metadata_with(station_metadata),
+        )
 
     @property
     def survey_id(self) -> str:
@@ -1085,14 +1113,16 @@ class ChannelDataset:
         >>> detrended_ts = ts.detrend('linear')
         >>> ts.plot()
         """
-        # Now that copy() method is robust, we can use direct copying
+        # ChannelTS copies each metadata object it is given, so nothing here
+        # needs another copy.
+        run_metadata, station_metadata, survey_metadata = self._metadata_levels()
         return ChannelTS(
             channel_type=self.metadata.type,
             data=self.hdf5_dataset[()],
-            channel_metadata=self.metadata.copy(),
-            run_metadata=self.run_metadata.copy(),
-            station_metadata=self.station_metadata.copy(),
-            survey_metadata=self.survey_metadata.copy(),
+            channel_metadata=self.metadata,
+            run_metadata=run_metadata,
+            station_metadata=station_metadata,
+            survey_metadata=survey_metadata,
             channel_response=self.channel_response,
         )
 
@@ -1627,11 +1657,15 @@ class ChannelDataset:
                 "file is in read mode cannot set an internal reference, using index values"
             )
             regional_ref = slice(start_index, end_index)
-        dt_index = make_dt_coordinates(start, self.sample_rate, npts)
+        if return_type in ["xarray", "pandas"]:
+            dt_index = make_dt_coordinates(start, self.sample_rate, npts)
+            first, last = dt_index[0], dt_index[-1]
+        else:
+            first, last = self._slice_time_bounds(start, npts)
 
         meta_dict = self.metadata.to_dict()[self.metadata._class_name]
-        meta_dict["time_period.start"] = dt_index[0].isoformat()
-        meta_dict["time_period.end"] = dt_index[-1].isoformat()
+        meta_dict["time_period.start"] = first.isoformat()
+        meta_dict["time_period.end"] = last.isoformat()
 
         data = None
         if return_type == "xarray":
@@ -1648,12 +1682,13 @@ class ChannelDataset:
         elif return_type == "numpy":
             data = self.hdf5_dataset[regional_ref]
         elif return_type == "channel_ts":
+            run_metadata, station_metadata, survey_metadata = self._metadata_levels()
             data = ChannelTS(
                 self.metadata.type,
                 data=self.hdf5_dataset[regional_ref],
-                survey_metadata=self.survey_metadata.copy(),
-                station_metadata=self.station_metadata.copy(),
-                run_metadata=self.run_metadata.copy(),
+                survey_metadata=survey_metadata,
+                station_metadata=station_metadata,
+                run_metadata=run_metadata,
                 channel_metadata={self.metadata.type: meta_dict},
                 channel_response=self.channel_response,
             )
@@ -1662,6 +1697,39 @@ class ChannelDataset:
             self.logger.error(msg)
             raise ValueError(msg)
         return data
+
+    def _slice_time_bounds(
+        self, start: str | MTime, npts: int
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
+        """
+        First and last time stamps of a slice's time index.
+
+        Equal to the ends of ``make_dt_coordinates(start, self.sample_rate,
+        npts)`` without building the whole index: the same call with two
+        points and the end time it would compute.
+
+        Parameters
+        ----------
+        start : str or MTime
+            Start time of the slice.
+        npts : int
+            Number of samples in the slice.
+
+        Returns
+        -------
+        tuple[pd.Timestamp, pd.Timestamp]
+            First and last time stamps.
+        """
+        sample_rate = self.sample_rate
+        if npts < 2 or sample_rate in [0, None] or start is None:
+            dt_index = make_dt_coordinates(start, sample_rate, npts)
+        else:
+            if not isinstance(start, MTime):
+                start = MTime(time_stamp=start)
+            dt_index = make_dt_coordinates(
+                start, sample_rate, 2, end_time=start + (npts - 1) / sample_rate
+            )
+        return dt_index[0], dt_index[-1]
 
     def get_index_from_time(self, given_time: str | MTime) -> int:
         """
