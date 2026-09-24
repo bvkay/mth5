@@ -12,7 +12,9 @@ from mth5.mth5 import MTH5
 from mth5.utils.helpers import close_open_files
 
 
-@pytest.fixture(params=["global_test1_mth5", "global_test1_v2_mth5", "global_test3_mth5"])
+@pytest.fixture(
+    params=["global_test1_mth5", "global_test1_v2_mth5", "global_test3_mth5"]
+)
 def channels(request, tmp_path):
     source = request.getfixturevalue(request.param)
     target = tmp_path / "archive.h5"
@@ -79,7 +81,9 @@ def test_time_slice_unchanged(channels):
             )
 
 
-@pytest.mark.parametrize("sample_rate", [1000.0, 256.0, 24000.0, 10.00064, 8.0, 1.0, 0.1, 1 / 3])
+@pytest.mark.parametrize(
+    "sample_rate", [1000.0, 256.0, 24000.0, 10.00064, 8.0, 1.0, 0.1, 1 / 3]
+)
 @pytest.mark.parametrize("start", ["2020-01-01T00:00:00", "2009-06-16T02:01:04.123456"])
 @pytest.mark.parametrize("npts", [1, 2, 3, 1000, 360_001])
 def test_slice_time_bounds_match_full_index(sample_rate, start, npts):

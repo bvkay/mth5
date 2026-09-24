@@ -11,7 +11,10 @@ from mth5.mth5 import MTH5
 
 def _run_ts(run_id):
     channels = []
-    for comp, cls, ch_type in [("ex", Electric, "electric"), ("hx", Magnetic, "magnetic")]:
+    for comp, cls, ch_type in [
+        ("ex", Electric, "electric"),
+        ("hx", Magnetic, "magnetic"),
+    ]:
         meta = cls(component=comp, sample_rate=8.0)
         meta.time_period.start = "2020-01-01T00:00:00+00:00"
         channels.append(
