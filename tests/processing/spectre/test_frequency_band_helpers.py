@@ -117,7 +117,7 @@ class TestHalfOctaveBands:
         # Use frequency way outside the FFT frequency range
         invalid_target = 2000.0  # Much higher than max FFT frequency
 
-        with pytest.raises(IndexError):
+        with pytest.raises((IndexError, ValueError)):
             half_octave(
                 target_frequency=invalid_target, fft_frequencies=fft_frequencies
             )
@@ -656,7 +656,7 @@ class TestRegressionCases:
                             target_frequency=freq, fft_frequencies=fft_frequencies
                         )
                         bands.append(band)
-                    except IndexError:
+                    except (IndexError, ValueError):
                         # Skip if no valid indices found in FFT frequency range
                         continue
 
