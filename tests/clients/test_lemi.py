@@ -159,7 +159,7 @@ class TestLEMI120CoilResponse(unittest.TestCase):
 
         # Check filter properties
         self.assertEqual(filter_obj.units_in, "nanoTesla")
-        self.assertEqual(filter_obj.units_out, "milliVolt")
+        self.assertEqual(filter_obj.units_out, "nanoTesla")
         self.assertEqual(filter_obj.type, "fap")
         self.assertTrue(filter_obj.name.startswith("lemi_120"))
 
