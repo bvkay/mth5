@@ -935,6 +935,7 @@ class RunGroup(BaseGroup):
         start: Optional[str] = None,
         end: Optional[str] = None,
         n_samples: Optional[int] = None,
+        channels: Optional[list[str]] = None,
     ) -> RunTS:
         """
         Convert run to a RunTS timeseries object.
@@ -953,17 +954,28 @@ class RunGroup(BaseGroup):
         n_samples : int, optional
             Number of samples to extract from start. If both end and n_samples
             are specified, end takes precedence. Default is None.
+        channels : list of str, optional
+            Channels to read, e.g. ``["hx", "hy"]``. The others are not read
+            from the file. If None, every channel is read. Default is None.
 
         Returns
         -------
         RunTS
-            RunTS object containing all channels with full run and station metadata.
+            RunTS object containing the channels with full run and station
+            metadata.
+
+        Raises
+        ------
+        MTH5Error
+            If a channel in ``channels`` does not exist in the run.
 
         Notes
         -----
         - Includes run, station, and survey metadata in the output
         - Skips the 'summary' group which is not a channel
         - If start is specified, performs time slicing; otherwise returns full data
+        - Channels keep the order of the run, whatever the order of ``channels``;
+          the run metadata still lists every channel recorded
 
         Examples
         --------
@@ -980,11 +992,28 @@ class RunGroup(BaseGroup):
         ...                       end='2023-01-01T13:00:00')
         >>> print(runts.ex.ts.shape)
         (1024,)
+
+        Read only the magnetic channels, e.g. of a remote reference:
+
+        >>> runts = run.to_runts(channels=["hx", "hy"])
+        >>> print(runts.channels)
+        ['hx', 'hy']
         """
+        names = [name for name in self.groups_list if name not in ["summary"]]
+        if channels is not None:
+            requested = [channel.lower() for channel in channels]
+            missing = sorted(set(requested) - set(names))
+            if missing:
+                msg = (
+                    f"Channels {missing} do not exist in run {self.metadata.id}, "
+                    f"which has {names}"
+                )
+                self.logger.error(msg)
+                raise MTH5Error(msg)
+            names = [name for name in names if name in requested]
+
         ch_list = []
-        for channel in self.groups_list:
-            if channel in ["summary"]:
-                continue
+        for channel in names:
             ch_obj = self.get_channel(channel)
 
             if start is not None:
