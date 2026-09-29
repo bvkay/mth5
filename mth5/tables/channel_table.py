@@ -138,6 +138,15 @@ class ChannelSummaryTable(MTH5Table):
 
         def has_data(h5_dataset: h5py.Dataset) -> bool:
             """Return True when the dataset has any non-zero data."""
+            # a dataset allocated but never written stores 0 bytes and reads
+            # back as its fill value; skip the scan when that value is zero
+            if (
+                h5_dataset.id.get_storage_size() == 0
+                and not h5_dataset.is_virtual
+                and h5_dataset.external is None
+                and not np.any(h5_dataset.fillvalue)
+            ):
+                return False
             # scan in blocks and stop at the first non-zero sample rather
             # than reading the whole channel back
             step = 2**22
