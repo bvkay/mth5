@@ -35,12 +35,80 @@ def apply_prewhitening(
         return run_xrds_input
 
     if prewhitening_type == "first difference":
-        run_xrds = run_xrds_input.differentiate("time")
+        run_xrds = _differentiate_time(run_xrds_input)
     else:
         msg = f"{prewhitening_type} pre-whitening not implemented"
         logger.exception(msg)
         raise NotImplementedError(msg)
     return run_xrds
+
+
+def _differentiate_time(run_xrds: xr.Dataset, dim: str = "time") -> xr.Dataset:
+    """
+    Differentiate each variable along time, as ``run_xrds.differentiate(dim)`` does.
+
+    ``differentiate`` turns a datetime coordinate into numbers in its own unit
+    (counted from the earliest time) and passes that array to ``np.gradient``
+    for every variable, which checks the spacing each time and, when it is
+    even, uses the scalar step.  Here the spacing is checked once on the
+    integer times and ``np.gradient`` gets the scalar step directly, which
+    gives the same numbers.  Uneven or missing times, a span that float64
+    does not hold exactly, and data that is not an in-memory numeric array
+    go through ``differentiate``.
+
+    Parameters
+    ----------
+    run_xrds : xr.Dataset
+        Time series to differentiate (can be multivariate).
+    dim : str, optional
+        Name of the time coordinate, by default "time".
+
+    Returns
+    -------
+    xr.Dataset
+        Derivative of each variable with respect to time, per unit of the
+        time coordinate.
+    """
+    names = [name for name, da in run_xrds.data_vars.items() if dim in da.dims]
+    has_time = dim in run_xrds.coords and run_xrds[dim].dims == (dim,)
+    time = run_xrds[dim].values if has_time else None
+    if (
+        time is None
+        or time.dtype.kind != "M"
+        or time.size < 2
+        or np.isnat(time[[0, -1]]).any()
+        or any(
+            not isinstance(run_xrds[name].data, np.ndarray)
+            or run_xrds[name].dtype.kind not in "iufc"
+            for name in names
+        )
+    ):
+        return run_xrds.differentiate(dim)
+
+    ticks = time.view("int64")
+    steps = np.diff(ticks)
+    if (
+        steps[0] == 0
+        or not (steps == steps[0]).all()
+        or abs(int(ticks[-1]) - int(ticks[0])) > 2**53
+    ):
+        return run_xrds.differentiate(dim)
+    # a float64 step, as differentiate's is: with a Python float NumPy 2
+    # would divide single-precision data in single precision
+    step = np.float64(steps[0])
+
+    data_vars = {}
+    for name, da in run_xrds.data_vars.items():
+        if name in names:
+            data_vars[name] = (
+                da.dims,
+                np.gradient(da.data, step, axis=da.get_axis_num(dim)),
+            )
+        else:
+            data_vars[name] = da.variable
+    differentiated = xr.Dataset(data_vars, coords=run_xrds.coords, attrs=run_xrds.attrs)
+    differentiated.encoding = dict(run_xrds.encoding)
+    return differentiated
 
 
 def apply_recoloring(
