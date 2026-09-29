@@ -183,6 +183,15 @@ class PhoenixClient(ClientBase):
         str, Path, or None
             Path to the saved MTH5 file.
 
+        Notes
+        -----
+        The runs are those of ``PhoenixCollection.get_runs``: continuous
+        files (td_150) make one run for as long as they join, and each burst
+        of a segmented file (td_24k) is a run of its own, numbered per
+        station in the order of the burst starts (sr24k_0001, sr24k_0002,
+        ...). For a segmented file ``read_file`` gives every burst in a list,
+        and the row's ``segment`` names the one that belongs to the run.
+
         Examples
         --------
         >>> client = PhoenixClient('data/path', save_path='output.h5')
@@ -220,6 +229,9 @@ class PhoenixClient(ClientBase):
                         f"Could not find receiver {collection_metadata.instrument_id} in "
                         f"receiver calibrations dict {self.receiver_calibration_dict}."
                     )
+                # the bursts of the segmented files of the last run, so that
+                # a file is read once for the runs of all its bursts
+                file_bursts = {}
                 # loop over runs for the station and add channels to the run group
                 for run_id, run_df in station_dict.items():
                     run_metadata = collection_metadata.run_metadata
@@ -229,20 +241,31 @@ class PhoenixClient(ClientBase):
                     run_group = station_group.add_run(
                         run_metadata.id, run_metadata=run_metadata
                     )
+                    run_bursts = {}
                     for row in run_df.itertuples():
                         try:
-                            ch_ts = read_file(
-                                row.fn,
-                                **{
-                                    "channel_map": collection_metadata.channel_map,
-                                    "rxcal_fn": rxcal_fn,
-                                },
-                            )
+                            ch_ts = file_bursts.get(row.fn)
+                            if ch_ts is None:
+                                ch_ts = read_file(
+                                    row.fn,
+                                    **{
+                                        "channel_map": collection_metadata.channel_map,
+                                        "rxcal_fn": rxcal_fn,
+                                    },
+                                )
                         except OSError as error:
                             self.logger.warning(
                                 f"OSError: skipping {row.fn.name} likely too small.  Error: {error}"
                             )
                             continue
+
+                        # a segmented file gives a list of its bursts; the
+                        # row names its burst by position, and int() converts
+                        # a nullable or float segment from other versions of
+                        # mt-io to a list index
+                        if isinstance(ch_ts, list):
+                            run_bursts[row.fn] = ch_ts
+                            ch_ts = ch_ts[int(row.segment)]
 
                         if ch_ts.component in ["h1", "h2", "h3"]:
                             # for phx coils from generic response curves
@@ -288,6 +311,7 @@ class PhoenixClient(ClientBase):
                         run_group.from_channel_ts(ch_ts)
 
                     run_group.update_metadata()
+                    file_bursts = run_bursts
 
                 station_group.update_metadata()
             survey_group.update_metadata()
