@@ -2,7 +2,6 @@
 
 import shutil
 
-import numpy as np
 import pytest
 from mt_metadata.common.mttime import MTime
 from mt_timeseries import ChannelTS
