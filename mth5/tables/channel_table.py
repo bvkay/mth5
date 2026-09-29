@@ -25,6 +25,44 @@ from mth5.tables import MTH5Table
 # =============================================================================
 
 
+def _channel_summary_to_dataframe(array: np.ndarray) -> pd.DataFrame:
+    """Decode a channel summary array into a pandas DataFrame.
+
+    Parameters
+    ----------
+    array : numpy.ndarray
+        Structured array with ``CHANNEL_DTYPE`` fields, read from the table
+        or built in memory.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Channel summary with decoded string columns and parsed datetimes.
+    """
+
+    df = pd.DataFrame(array)
+    for key in [
+        "survey",
+        "station",
+        "run",
+        "component",
+        "measurement_type",
+        "units",
+    ]:
+        setattr(df, key, getattr(df, key).str.decode("utf-8"))
+    try:
+        df.start = pd.to_datetime(df.start.str.decode("utf-8"), format="mixed")
+        df.end = pd.to_datetime(df.end.str.decode("utf-8"), format="mixed")
+    except ValueError:
+        df.start = pd.to_datetime(df.start.str.decode("utf-8"))
+        df.end = pd.to_datetime(df.end.str.decode("utf-8"))
+
+    return df
+
+
+# =============================================================================
+
+
 class ChannelSummaryTable(MTH5Table):
     """Convenience wrapper around the channel summary dataset.
 
@@ -63,29 +101,40 @@ class ChannelSummaryTable(MTH5Table):
         >>> df.head()  # doctest: +SKIP
         """
 
-        df = pd.DataFrame(self.array[()])
-        for key in [
-            "survey",
-            "station",
-            "run",
-            "component",
-            "measurement_type",
-            "units",
-        ]:
-            setattr(df, key, getattr(df, key).str.decode("utf-8"))
-        try:
-            df.start = pd.to_datetime(df.start.str.decode("utf-8"), format="mixed")
-            df.end = pd.to_datetime(df.end.str.decode("utf-8"), format="mixed")
-        except ValueError:
-            df.start = pd.to_datetime(df.start.str.decode("utf-8"))
-            df.end = pd.to_datetime(df.end.str.decode("utf-8"))
+        return _channel_summary_to_dataframe(self.array[()])
 
-        return df
+    def _can_write(self) -> bool:
+        """Return ``True`` if the file holding the table is open for writing."""
+        file_mode = getattr(getattr(self.array, "file", None), "mode", "")
+        return "w" in file_mode or "+" in file_mode
 
     def summarize(self) -> None:
         """Populate the summary table from channel datasets in the file."""
 
         self.clear_table()
+        for ch_entry in self._channel_entries():
+            try:
+                self.add_row(ch_entry)
+            except ValueError as error:
+                msg = (
+                    f"{error}. "
+                    "it is possible that the OS that made the table is not the OS operating on it."
+                )
+                self.logger.warning(msg)
+
+    def _channel_entries(self) -> list[np.ndarray]:
+        """Build one summary entry for each channel dataset in the file.
+
+        It only reads the file, so it also works on a file open read-only.
+
+        Returns
+        -------
+        list of numpy.ndarray
+            One single-row ``CHANNEL_DTYPE`` array per electric, magnetic or
+            auxiliary channel dataset, in the order the file is traversed.
+        """
+
+        entries = []
 
         def has_data(h5_dataset: h5py.Dataset) -> bool:
             """Return True when the dataset has any non-zero data."""
@@ -137,20 +186,13 @@ class ChannelSummaryTable(MTH5Table):
                 try:
                     ch_type = group.attrs["type"]
                     if ch_type in ["electric", "magnetic", "auxiliary"]:
-                        ch_entry = get_channel_entry(group)
-                        try:
-                            self.add_row(ch_entry)
-                        except ValueError as error:
-                            msg = (
-                                f"{error}. "
-                                "it is possible that the OS that made the table is not the OS operating on it."
-                            )
-                            self.logger.warning(msg)
+                        entries.append(get_channel_entry(group))
 
                 except KeyError:
                     pass
 
         recursive_get_channel_entry(self.array.parent)
+        return entries
 
     def to_run_summary(
         self,
@@ -181,9 +223,25 @@ class ChannelSummaryTable(MTH5Table):
         ['survey', 'station', 'run', 'start']
         """
 
-        if not self._has_entries():
+        if self._has_entries():
+            ch_summary_df = self.to_dataframe()
+        elif self._can_write():
             self.summarize()
-        ch_summary_df = self.to_dataframe()
+            ch_summary_df = self.to_dataframe()
+        else:
+            # the summary was never written (an interrupted writer) and the
+            # file is open read-only: summarize in memory only
+            self.logger.debug(
+                f"Channel summary of {self.array.file.filename} has no entries "
+                "and the file is read-only; summarizing in memory."
+            )
+            entries = self._channel_entries()
+            if entries:
+                array = np.concatenate(entries)
+            else:
+                # what summarize leaves in a file without channels
+                array = np.zeros(1, dtype=self.dtype)
+            ch_summary_df = _channel_summary_to_dataframe(array)
 
         group_by_columns = ["survey", "station", "run"]
         grouper = ch_summary_df.groupby(group_by_columns)
